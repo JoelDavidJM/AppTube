@@ -328,6 +328,7 @@ app.get('/api/lyrics', async (req, res) => {
       // Use direct exec so we see real output and avoid wrapper quirks
       const { err, stdout, stderr } = await runYtDlp([
         '--skip-download',
+        '--no-playlist',
         '--write-subs',
         '--write-auto-subs',
         '--sub-langs', lang,
