@@ -111,6 +111,17 @@ export default function App() {
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
   
+  // Playlists State
+  const [playlists, setPlaylists] = useState(() => {
+    try {
+      const saved = localStorage.getItem('app_playlists');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+  const [activePlaylistId, setActivePlaylistId] = useState(null); // null = Todos
+  
   // Load history from localStorage at start
   const [history, setHistory] = useState(() => {
     try {
@@ -129,6 +140,11 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('cloud_history', JSON.stringify(history));
   }, [history]);
+
+  // Sync playlists with localStorage
+  useEffect(() => {
+    localStorage.setItem('app_playlists', JSON.stringify(playlists));
+  }, [playlists]);
 
   // Update playback rate when it changes OR when video changes
   useEffect(() => {
@@ -324,6 +340,47 @@ export default function App() {
       else next.add(id);
       return next;
     });
+  };
+
+  const handleCreatePlaylist = () => {
+    const name = window.prompt('Nombre de la nueva lista:');
+    if (!name) return;
+    const newPlaylist = {
+       id: Date.now(),
+       name: name,
+       videoIds: []
+    };
+    setPlaylists(prev => [...prev, newPlaylist]);
+  };
+
+  const addToPlaylist = (playlistId) => {
+    const idsToAdd = Array.from(selectedIds);
+    setPlaylists(prev => prev.map(pl => {
+      if (pl.id === playlistId) {
+        // Only add unique IDs
+        const combined = new Set([...pl.videoIds, ...idsToAdd]);
+        return { ...pl, videoIds: Array.from(combined) };
+      }
+      return pl;
+    }));
+    setIsSelectionMode(false);
+    setSelectedIds(new Set());
+    alert('Videos añadidos a la lista con éxito.');
+  };
+
+  const removeFromPlaylist = (playlistId, videoId) => {
+     setPlaylists(prev => prev.map(pl => {
+        if (pl.id === playlistId) {
+           return { ...pl, videoIds: pl.videoIds.filter(id => id !== videoId) };
+        }
+        return pl;
+     }));
+  };
+
+  const deletePlaylist = (playlistId) => {
+     if (!window.confirm('¿Quieres eliminar esta lista por completo? Los videos no se borrarán de tu galería general.')) return;
+     setPlaylists(prev => prev.filter(pl => pl.id !== playlistId));
+     setActivePlaylistId(null);
   };
 
   const cyclePlaybackMode = () => {
@@ -541,7 +598,7 @@ export default function App() {
                     </div>
                     <div className="video-meta">
                        <div className="video-title">{videoInfo.title}</div>
-                       <div className="video-status-simple">
+        <div className="video-status-simple">
                           {downloading ? '🔄 Subiendo a Cloudinary...' : downloadSuccess ? '✅ ¡Listo para ver!' : ''}
                        </div>
                     </div>
@@ -552,10 +609,38 @@ export default function App() {
         </div>
 
         {/* Saved Videos History */}
-        <section className="history-section">
+        <section id="history" className="history-section">
+          {/* Playlist Tabs */}
+          <div className="playlist-tabs-container">
+            <div className="playlist-tabs">
+              <button 
+                className={`tab-btn ${activePlaylistId === null ? 'active' : ''}`}
+                onClick={() => setActivePlaylistId(null)}
+              >
+                🎥 Todos
+              </button>
+              {playlists.map(pl => (
+                <div key={pl.id} className="tab-wrapper">
+                  <button 
+                    className={`tab-btn ${activePlaylistId === pl.id ? 'active' : ''}`}
+                    onClick={() => setActivePlaylistId(pl.id)}
+                  >
+                    📁 {pl.name}
+                  </button>
+                  {activePlaylistId === pl.id && (
+                    <button className="btn-tab-action" onClick={() => deletePlaylist(pl.id)} title="Eliminar Lista">✕</button>
+                  )}
+                </div>
+              ))}
+              <button className="tab-btn create" onClick={handleCreatePlaylist}>
+                ➕ Nueva Lista
+              </button>
+            </div>
+          </div>
+
           <div className="history-header">
             <h2 className="history-title">
-              📋 Galería Cloud
+              {activePlaylistId === null ? '📋 Galería Global' : `📂 ${playlists.find(p => p.id === activePlaylistId)?.name}`}
             </h2>
             {history.length > 0 && (
               <div className="history-selection-bar">
@@ -564,12 +649,22 @@ export default function App() {
                     <button className="btn-clear cancel" onClick={() => { setIsSelectionMode(false); setSelectedIds(new Set()); }}>
                       Cancelar
                     </button>
+                    {playlists.length > 0 && selectedIds.size > 0 && (
+                       <div className="add-to-playlist-group">
+                          <select className="playlist-select" onChange={(e) => addToPlaylist(Number(e.target.value))} defaultValue="">
+                             <option value="" disabled>Añadir a...</option>
+                             {playlists.map(pl => (
+                                <option key={pl.id} value={pl.id}>{pl.name}</option>
+                             ))}
+                          </select>
+                       </div>
+                    )}
                     <button 
                       className="btn-clear delete-bulk" 
                       onClick={handleBulkDelete}
                       disabled={selectedIds.size === 0}
                     >
-                      Borrar Seleccionados ({selectedIds.size})
+                      Borrar de Nube ({selectedIds.size})
                     </button>
                   </>
                 ) : (
@@ -581,13 +676,20 @@ export default function App() {
             )}
           </div>
 
-          {history.length === 0 ? (
+          {((activePlaylistId === null && history.length === 0) || 
+            (activePlaylistId !== null && playlists.find(p => p.id === activePlaylistId)?.videoIds.length === 0)) ? (
             <div className="history-empty">
-              No tienes videos guardados aún. Empieza pegando un link arriba.
+              No hay videos aquí aún.
             </div>
           ) : (
             <div className="history-list">
-              {history.map((item, index) => (
+              {history
+                .filter(item => {
+                  if (activePlaylistId === null) return true;
+                  const pl = playlists.find(p => p.id === activePlaylistId);
+                  return pl?.videoIds.includes(item.id);
+                })
+                .map((item, index) => (
                 <div 
                   key={item.id} 
                   className={`history-item clickable ${item.status === 'success' ? 'ready' : ''} ${selectedIds.has(item.id) ? 'selected' : ''} ${isSelectionMode ? 'selection-active' : ''}`}
@@ -608,7 +710,6 @@ export default function App() {
                                 setActiveVideoIndex(index);
                             }
                          } else {
-                            // Automatically fix status if data got lost somehow
                             setHistory(prev => prev.map(h => h.id === item.id ? { ...h, status: 'failed' } : h));
                             alert('No se encontró el enlace de este video en el historial. Intenta procesarlo de nuevo.');
                          }
@@ -653,13 +754,24 @@ export default function App() {
                       {item.status === 'downloading' && 'Subiendo…'}
                     </span>
                     {!isSelectionMode && (
-                      <button 
-                        className="btn-delete-item" 
-                        onClick={(e) => { e.stopPropagation(); handleDelete(item.id, item.publicId); }}
-                        title="Eliminar"
-                      >
-                        ✕
-                      </button>
+                      <>
+                        {activePlaylistId !== null && (
+                          <button 
+                            className="btn-delete-item-pl" 
+                            onClick={(e) => { e.stopPropagation(); removeFromPlaylist(activePlaylistId, item.id); }}
+                            title="Quitar de lista"
+                          >
+                            ➖
+                          </button>
+                        )}
+                        <button 
+                          className="btn-delete-item" 
+                          onClick={(e) => { e.stopPropagation(); handleDelete(item.id, item.publicId); }}
+                          title="Eliminar de Nube"
+                        >
+                          ✕
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>
@@ -692,6 +804,80 @@ export default function App() {
           flex-direction: column;
           gap: 15px;
         }
+        .playlist-tabs-container {
+          overflow-x: auto;
+          margin-bottom: 24px;
+          padding-bottom: 8px;
+          scrollbar-width: thin;
+        }
+        .playlist-tabs {
+          display: flex;
+          gap: 12px;
+          align-items: center;
+        }
+        .tab-btn {
+          background: rgba(255,255,255,0.04);
+          border: 1px solid rgba(255,255,255,0.1);
+          color: var(--text-muted);
+          padding: 10px 20px;
+          border-radius: 14px;
+          font-weight: 600;
+          font-size: 14px;
+          cursor: pointer;
+          white-space: nowrap;
+          transition: 0.3s;
+        }
+        .tab-btn:hover {
+          background: rgba(255,255,255,0.08);
+          color: white;
+        }
+        .tab-btn.active {
+          background: var(--gradient-main);
+          color: white;
+          border-color: transparent;
+          box-shadow: 0 4px 15px rgba(139, 92, 246, 0.3);
+        }
+        .tab-btn.create {
+          border-style: dashed;
+          border-color: var(--purple-light);
+          color: var(--purple-light);
+        }
+        .tab-wrapper { position: relative; display: flex; align-items: center; }
+        .btn-tab-action {
+          position: absolute; right: 5px; top: -5px;
+          background: var(--red); color: white; border: none;
+          width: 18px; height: 18px; border-radius: 50%;
+          font-size: 10px; cursor: pointer;
+          display: flex; align-items: center; justify-content: center;
+          box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+        }
+
+        .playlist-select {
+          background: rgba(139, 92, 246, 0.1);
+          border: 1px solid var(--purple);
+          color: var(--purple-light);
+          padding: 8px 12px;
+          border-radius: 12px;
+          font-size: 13px;
+          font-weight: 700;
+          cursor: pointer;
+          outline: none;
+        }
+        .btn-delete-item-pl {
+          background: rgba(255,255,255,0.05);
+          border: 1px solid var(--border);
+          color: var(--text-muted);
+          width: 32px; height: 32px;
+          border-radius: 50%;
+          display: flex; align-items: center; justify-content: center;
+          cursor: pointer; transition: 0.2s;
+          margin-right: 4px;
+        }
+        .btn-delete-item-pl:hover {
+          background: rgba(255,255,255,0.1);
+          color: white;
+        }
+
         .history-selection-bar {
           display: flex;
           gap: 10px;
