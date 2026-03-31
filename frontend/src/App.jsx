@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 
-const API_BASE = 'http://localhost:3001';
+const API_BASE = 'http://localhost:3002';
 
 // --- Helpers ---
 function detectPlatform(url) {
@@ -96,6 +96,24 @@ const SpeedIcon = () => (
   </svg>
 );
 
+const SettingsIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="20" height="20">
+    <circle cx="12" cy="12" r="3"></circle>
+    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+  </svg>
+);
+
+const DragIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="16" height="16">
+    <circle cx="9" cy="5" r="1"></circle>
+    <circle cx="9" cy="12" r="1"></circle>
+    <circle cx="9" cy="19" r="1"></circle>
+    <circle cx="15" cy="5" r="1"></circle>
+    <circle cx="15" cy="12" r="1"></circle>
+    <circle cx="15" cy="19" r="1"></circle>
+  </svg>
+);
+
 export default function App() {
   const [url, setUrl] = useState('');
   const [platform, setPlatform] = useState(null);
@@ -106,10 +124,15 @@ export default function App() {
   const [downloading, setDownloading] = useState(false);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
   const [videoError, setVideoError] = useState(false);
+  const [activeMode, setActiveMode] = useState('download'); // 'download' | 'lyrics'
+  const [lyricsResult, setLyricsResult] = useState('');
   const [playbackMode, setPlaybackMode] = useState(0); // 0: Una vez, 1: Bucle, 2: Auto-Siguiente
   const [playbackRate, setPlaybackRate] = useState(1);
+  const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
+  const [draggedItemIndex, setDraggedItemIndex] = useState(null);
+  const [dragOverIndex, setDragOverIndex] = useState(null);
   
   // Playlists State
   const [playlists, setPlaylists] = useState(() => {
@@ -132,7 +155,18 @@ export default function App() {
     }
   });
 
+  // Lyrics History State
+  const [lyricsHistory, setLyricsHistory] = useState(() => {
+    try {
+      const saved = localStorage.getItem('app_lyrics_history');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+
   const [activeVideoIndex, setActiveVideoIndex] = useState(-1); // Index in history
+  const [viewingLyric, setViewingLyric] = useState(null); // Full lyric object for modal
   const inputRef = useRef(null);
   const videoRef = useRef(null);
 
@@ -145,6 +179,11 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('app_playlists', JSON.stringify(playlists));
   }, [playlists]);
+
+  // Sync lyrics with localStorage
+  useEffect(() => {
+    localStorage.setItem('app_lyrics_history', JSON.stringify(lyricsHistory));
+  }, [lyricsHistory]);
 
   // Prevent body scroll when modal is open
   useEffect(() => {
@@ -177,6 +216,7 @@ export default function App() {
     setPlatform(detectPlatform(val));
     setError('');
     setVideoInfo(null);
+    setLyricsResult('');
     setDownloadSuccess(false);
   };
 
@@ -189,24 +229,56 @@ export default function App() {
     setLoading(true);
     setError('');
     setVideoInfo(null);
+    setLyricsResult('');
     setSelectedFormat(null);
     setDownloadSuccess(false);
 
     try {
-      const res = await fetch(`${API_BASE}/api/info?url=${encodeURIComponent(trimmed)}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Error al obtener información del video');
-      
-      setVideoInfo(data);
-      // Determine format automatically
-      const best = data.formats.find(f => f.label === 'Best Quality') || data.formats.find(f => !f.label.includes('Audio')) || data.formats[0];
-      setSelectedFormat(best);
+      if (activeMode === 'download') {
+        const res = await fetch(`${API_BASE}/api/info?url=${encodeURIComponent(trimmed)}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Error al obtener información del video');
+        
+        setVideoInfo(data);
+        const best = data.formats.find(f => f.label === 'Best Quality') || data.formats.find(f => !f.label.includes('Audio')) || data.formats[0];
+        setSelectedFormat(best);
+        handleSaveToCloud(data, best, trimmed);
+      } else {
+        // LYRICS MODE
+        const res = await fetch(`${API_BASE}/api/lyrics?url=${encodeURIComponent(trimmed)}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'No se pudo extraer la letra de este video.');
+        
+        if (data.success === false) {
+           setError(data.message || 'Este video no tiene letras disponibles.');
+           setLyricsResult('');
+           setVideoInfo({ title: data.title, thumbnail: data.thumbnail, platform: detectPlatform(trimmed) });
+           setLoading(false);
+           return;
+        }
 
-      // AUTOMATICALLY START SAVING TO CLOUD
-      handleSaveToCloud(data, best, trimmed);
+        setLyricsResult(data.lyrics);
+        setVideoInfo({ title: data.title, thumbnail: data.thumbnail, platform: detectPlatform(trimmed) });
+        
+        // Save to lyrics history ONLY if we have actual lyrics
+        if (data.lyrics) {
+          const newLyric = {
+            id: Date.now(),
+            title: data.title,
+            thumbnail: data.thumbnail,
+            lyrics: data.lyrics,
+            platform: detectPlatform(trimmed),
+            url: trimmed,
+            time: Date.now()
+          };
+          setLyricsHistory(prev => [newLyric, ...prev.filter(l => l.url !== trimmed)]);
+        }
+      }
     } catch (err) {
       setError(err.message);
       setLoading(false);
+    } finally {
+      if (activeMode === 'lyrics') setLoading(false);
     }
   };
 
@@ -394,6 +466,50 @@ export default function App() {
      setActivePlaylistId(null);
   };
 
+  const deleteLyric = (id) => {
+    if (!window.confirm('¿Eliminar esta letra guardada?')) return;
+    setLyricsHistory(prev => prev.filter(l => l.id !== id));
+  };
+
+  // Reordering Logic
+  const handleDragStart = (e, index) => {
+    setDraggedItemIndex(index);
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleDragOver = (e, index) => {
+    e.preventDefault();
+    if (dragOverIndex !== index) setDragOverIndex(index);
+  };
+
+  const handleDrop = (e, targetIndex) => {
+    e.preventDefault();
+    setDragOverIndex(null);
+    if (draggedItemIndex === null || draggedItemIndex === targetIndex) return;
+
+    if (activePlaylistId === null) {
+      // Global reorder
+      setHistory(prev => {
+        const result = Array.from(prev);
+        const [removed] = result.splice(draggedItemIndex, 1);
+        result.splice(targetIndex, 0, removed);
+        return result;
+      });
+    } else {
+      // Playlist reorder
+      setPlaylists(prev => prev.map(pl => {
+        if (pl.id === activePlaylistId) {
+          const ids = Array.from(pl.videoIds);
+          const [removed] = ids.splice(draggedItemIndex, 1);
+          ids.splice(targetIndex, 0, removed);
+          return { ...pl, videoIds: ids };
+        }
+        return pl;
+      }));
+    }
+    setDraggedItemIndex(null);
+  };
+
   const cyclePlaybackMode = () => {
     setPlaybackMode(prev => (prev + 1) % 3);
   };
@@ -430,9 +546,6 @@ export default function App() {
             <br />
             <span className="gradient-text">YouTube & TikTok</span>
           </h1>
-          <p className="hero-subtitle">
-            Pega el enlace y nosotros lo subimos a Cloudinary por ti. Míralos aquí mismo sin gastar espacio en tu pc.
-          </p>
           <div className="platform-icons">
             <div className="platform-badge youtube">
               <YouTubeIcon />
@@ -484,6 +597,36 @@ export default function App() {
                        if (videoRef.current) videoRef.current.playbackRate = playbackRate;
                     }}
                   />
+
+                  {/* Overlaid Speed Menu Button */}
+                  <div className="video-overlay-controls">
+                    <button 
+                      className={`btn-settings ${showSpeedMenu ? 'active' : ''}`}
+                      onClick={() => setShowSpeedMenu(!showSpeedMenu)}
+                      title="Velocidad de reproducción"
+                    >
+                      <SettingsIcon />
+                    </button>
+                    {showSpeedMenu && (
+                      <div className="speed-menu-dropdown fade-in-fast">
+                        <div className="speed-menu-header">Velocidad</div>
+                        {[0.5, 1, 1.5, 2, 2.5, 3].map(rate => (
+                          <div 
+                            key={rate} 
+                            className={`speed-option ${playbackRate === rate ? 'active' : ''}`}
+                            onClick={() => {
+                              setPlaybackRate(rate);
+                              setShowSpeedMenu(false);
+                            }}
+                          >
+                            <span>{rate}x</span>
+                            {playbackRate === rate && <span className="check">✓</span>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                   {videoError && (
                     <div className="video-error-overlay">
                        <div className="video-error-content">
@@ -519,18 +662,6 @@ export default function App() {
                        {playbackMode === 1 && <span>🔁 En Bucle</span>}
                        {playbackMode === 2 && <span>➡️ Auto-Siguiente</span>}
                     </button>
-
-                    <div className="speed-control-group">
-                       {[0.5, 1, 1.5, 2, 2.5, 3].map(rate => (
-                          <button 
-                             key={rate}
-                             className={`speed-pill ${playbackRate === rate ? 'active' : ''}`}
-                             onClick={() => setPlaybackRate(rate)}
-                          >
-                             {rate}x
-                          </button>
-                       ))}
-                    </div>
                   </div>
                   <div className="video-info-text">
                     {activeVideo.platform.toUpperCase()} · {activeVideo.format}
@@ -543,6 +674,21 @@ export default function App() {
 
         {/* Main Downloader */}
         <div id="downloader" className="downloader-card">
+          {/* Mode Switcher Tabs */}
+          <div className="mode-switcher">
+            <button 
+              className={`mode-tab ${activeMode === 'download' ? 'active' : ''}`}
+              onClick={() => { setActiveMode('download'); setLyricsResult(''); setVideoInfo(null); setError(''); }}
+            >
+              📥 Descargar
+            </button>
+            <button 
+              className={`mode-tab ${activeMode === 'lyrics' ? 'active' : ''}`}
+              onClick={() => { setActiveMode('lyrics'); setLyricsResult(''); setVideoInfo(null); setError(''); }}
+            >
+              🎤 Letra
+            </button>
+          </div>
 
           {/* URL Input */}
           {platform && (
@@ -561,7 +707,7 @@ export default function App() {
                 ref={inputRef}
                 className="url-input"
                 type="url"
-                placeholder="Pega el enlace de YouTube o TikTok aquí…"
+                placeholder={activeMode === 'download' ? "Pega el enlace para guardar en nube…" : "Pega el enlace para extraer la letra…"}
                 value={url}
                 onChange={handleUrlChange}
                 onKeyDown={handleKeyDown}
@@ -575,10 +721,25 @@ export default function App() {
               onClick={handleFetchInfo}
               disabled={loading || downloading || !url.trim()}
             >
-              <CloudIcon />
-              {loading || downloading ? 'Procesando…' : 'Descargar y Guardar en la Nube'}
+              {activeMode === 'download' ? <CloudIcon /> : <SpeedIcon />}
+              {loading || downloading ? 'Procesando…' : activeMode === 'download' ? 'Descargar y Guardar' : 'Extraer Letra'}
             </button>
           </div>
+
+          {/* Lyrics Result View */}
+          {lyricsResult && (
+            <div className="lyrics-box fade-in">
+              <div className="lyrics-header">
+                <h3>Letra del Video</h3>
+                <button className="btn-copy" onClick={() => { navigator.clipboard.writeText(lyricsResult); alert('Copiado'); }}>Copiar Letra</button>
+              </div>
+              <div className="lyrics-content">
+                {(lyricsResult || '').split('\n').map((line, i) => (
+                  <p key={i}>{line}</p>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Error */}
           {error && (
@@ -630,6 +791,12 @@ export default function App() {
               >
                 🎥 Todos
               </button>
+              <button 
+                className={`tab-btn ${activePlaylistId === 'lyrics_lib' ? 'active' : ''}`}
+                onClick={() => setActivePlaylistId('lyrics_lib')}
+              >
+                🎤 Letras Guardadas
+              </button>
               {playlists.map(pl => (
                 <div key={pl.id} className="tab-wrapper">
                   <button 
@@ -651,7 +818,9 @@ export default function App() {
 
           <div className="history-header">
             <h2 className="history-title">
-              {activePlaylistId === null ? '📋 Galería Global' : `📂 ${playlists.find(p => p.id === activePlaylistId)?.name}`}
+              {activePlaylistId === null ? '📋 Galería Global' : 
+               activePlaylistId === 'lyrics_lib' ? '🎤 Biblioteca de Letras' : 
+               `📂 ${playlists.find(p => p.id === activePlaylistId)?.name}`}
             </h2>
             {history.length > 0 && (
               <div className="history-selection-bar">
@@ -687,115 +856,179 @@ export default function App() {
             )}
           </div>
 
-          {((activePlaylistId === null && history.length === 0) || 
-            (activePlaylistId !== null && playlists.find(p => p.id === activePlaylistId)?.videoIds.length === 0)) ? (
-            <div className="history-empty">
-              No hay videos aquí aún.
-            </div>
-          ) : (
-            <div className="history-list">
-              {history
-                .filter(item => {
-                  if (activePlaylistId === null) return true;
-                  const pl = playlists.find(p => p.id === activePlaylistId);
-                  return pl?.videoIds.includes(item.id);
-                })
-                .map((item, index) => (
-                <div 
-                  key={item.id} 
-                  className={`history-item clickable ${item.status === 'success' ? 'ready' : ''} ${selectedIds.has(item.id) ? 'selected' : ''} ${isSelectionMode ? 'selection-active' : ''}`}
-                  onClick={() => {
-                      if (isSelectionMode) {
-                        toggleSelect(item.id);
-                        return;
-                      }
-                      console.log('Clicked item:', item);
-                      if (item.status === 'success') {
-                         if (item.cloudinaryUrl) {
-                            const isAudio = item.format?.toLowerCase().includes('audio');
-                            if (isAudio) {
-                               window.open(item.cloudinaryUrl, '_blank');
-                            } else {
-                                console.log('Abriendo video en historial. Index:', index, 'ID:', item.id);
-                                setVideoError(false);
-                                setActiveVideoIndex(index);
-                            }
-                         } else {
-                            setHistory(prev => prev.map(h => h.id === item.id ? { ...h, status: 'failed' } : h));
-                            alert('No se encontró el enlace de este video en el historial. Intenta procesarlo de nuevo.');
-                         }
-                      } else if (item.status === 'downloading') {
-                         alert('Todavía se está subiendo… falta poco.');
-                      } else if (item.status === 'failed') {
-                         alert('Hubo un error al descargar este video. Por favor, intenta pegando el link de nuevo.');
-                      }
-                   }}
-                >
-                  {isSelectionMode && (
-                    <div className={`selection-indicator ${selectedIds.has(item.id) ? 'checked' : ''}`}>
-                      {selectedIds.has(item.id) ? '✓' : ''}
+          <div className="history-list">
+            {activePlaylistId === 'lyrics_lib' ? (
+              lyricsHistory.length > 0 ? (
+                lyricsHistory.map(lyric => (
+                  <div key={lyric.id} className="history-item ready fade-in" onClick={() => setViewingLyric(lyric)}>
+                    <div className="history-thumb">
+                       {lyric.thumbnail ? <img src={lyric.thumbnail} alt={lyric.title} /> : <div className="history-thumb-placeholder">🎤</div>}
                     </div>
-                  )}
-                  <div className="history-thumb">
-                    {item.thumbnail ? (
-                      <img src={item.thumbnail} alt={item.title} />
-                    ) : (
-                      <div className="history-thumb-placeholder">
-                        {item.platform === 'youtube' ? '▶️' : '🎵'}
-                      </div>
-                    )}
-                    {item.status === 'success' && !item.format.toLowerCase().includes('audio') && !isSelectionMode && (
-                      <div className="play-overlay">
-                        <PlayIcon />
-                      </div>
-                    )}
-                  </div>
-                  <div className="history-info">
-                    <div className="history-item-title">{item.title}</div>
-                    <div className="history-item-meta">
-                      <span>{item.format}</span>
-                      <span>·</span>
-                      <span>{timeAgo(item.time)}</span>
+                    <div className="history-info">
+                       <div className="history-item-title">{lyric.title}</div>
+                       <div className="history-item-meta">
+                          {lyric.platform && <span className="history-platform">{lyric.platform.toUpperCase()}</span>}
+                          <span>·</span>
+                          <span>{timeAgo(lyric.time)}</span>
+                       </div>
+                    </div>
+                    <div className="history-actions">
+                       <button className="btn-delete-item" onClick={(e) => { e.stopPropagation(); deleteLyric(lyric.id); }}>✕</button>
                     </div>
                   </div>
-                  <div className="history-actions">
-                    <span className={`history-status ${item.status}`}>
-                      {item.status === 'success' && 'Listo'}
-                      {item.status === 'failed' && 'Error'}
-                      {item.status === 'downloading' && 'Subiendo…'}
-                    </span>
-                    {!isSelectionMode && (
-                      <>
+                ))
+              ) : (
+                <div className="history-empty">Aún no has guardado ninguna letra. Extrae una arriba para verla aquí.</div>
+              )
+            ) : (
+              (() => {
+                let itemsToRender = [];
+                 if (activePlaylistId === null) {
+                    itemsToRender = history;
+                 } else {
+                    const pl = playlists.find(p => p.id === activePlaylistId);
+                    itemsToRender = history.filter(h => pl?.videoIds.includes(h.id));
+                    // Preserve playlist order
+                    itemsToRender = pl.videoIds.map(id => itemsToRender.find(it => it.id === id)).filter(Boolean);
+                 }
+                 
+                 if (itemsToRender.length === 0) return <div className="history-empty">No hay videos en esta sección.</div>;
+
+                 return itemsToRender.map((item, index) => (
+                    <div 
+                      key={item.id} 
+                      draggable={!isSelectionMode}
+                      onDragStart={(e) => handleDragStart(e, index)}
+                      onDragOver={(e) => handleDragOver(e, index)}
+                      onDragLeave={() => setDragOverIndex(null)}
+                      onDrop={(e) => handleDrop(e, index)}
+                      className={`history-item clickable ${item.status === 'success' ? 'ready' : ''} ${selectedIds.has(item.id) ? 'selected' : ''} ${isSelectionMode ? 'selection-active' : ''} ${draggedItemIndex === index ? 'dragging' : ''} ${dragOverIndex === index ? 'drop-target' : ''}`}
+                      onClick={() => {
+                          if (isSelectionMode) {
+                            toggleSelect(item.id);
+                          } else if (item.status === 'success' && item.cloudinaryUrl && !item.format.toLowerCase().includes('audio')) {
+                            setVideoError(false);
+                            setActiveVideoIndex(index);
+                          } else if (item.cloudinaryUrl) {
+                            window.open(item.cloudinaryUrl, '_blank');
+                          }
+                      }}
+                    >
+                      <div className="drag-handle"><DragIcon /></div>
+                      {isSelectionMode && (
+                        <div className={`selection-indicator ${selectedIds.has(item.id) ? 'checked' : ''}`}>
+                          {selectedIds.has(item.id) ? '✓' : ''}
+                        </div>
+                      )}
+                      <div className="history-thumb">
+                        {item.thumbnail ? <img src={item.thumbnail} alt={item.title} /> : <div className="history-thumb-placeholder">?</div>}
+                        {item.status === 'success' && <div className="play-overlay"><PlayIcon /></div>}
+                      </div>
+                      <div className="history-info">
+                        <div className="history-item-title">{item.title}</div>
+                        <div className="history-item-meta">
+                          <span className={`history-status ${item.status}`}>
+                            {item.status === 'success' ? '✓ Listo' : item.status === 'failed' ? '⚠ Falló' : '🔄 Subiendo...'}
+                          </span>
+                          <span>{timeAgo(item.time)}</span>
+                          <span>{item.format}</span>
+                        </div>
+                      </div>
+                      <div className="history-actions">
                         {activePlaylistId !== null && (
-                          <button 
-                            className="btn-delete-item-pl" 
-                            onClick={(e) => { e.stopPropagation(); removeFromPlaylist(activePlaylistId, item.id); }}
-                            title="Quitar de lista"
-                          >
-                            ➖
-                          </button>
+                           <button className="btn-delete-item-pl" onClick={(e) => { e.stopPropagation(); removeFromPlaylist(activePlaylistId, item.id); }} title="Quitar de esta lista">
+                              －
+                           </button>
                         )}
-                        <button 
-                          className="btn-delete-item" 
-                          onClick={(e) => { e.stopPropagation(); handleDelete(item.id, item.publicId); }}
-                          title="Eliminar de Nube"
-                        >
-                          ✕
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+                        <button className="btn-delete-item" onClick={(e) => { e.stopPropagation(); handleDelete(item.id, item.publicId); }}>✕</button>
+                      </div>
+                    </div>
+                 ));
+              })()
+            )}
+          </div>
         </section>
+
+        {/* Viewing Lyric Modal */}
+        {viewingLyric && (
+          <div className="video-modal-overlay" onClick={() => setViewingLyric(null)}>
+            <div className="video-modal-content lyrics-modal-content fade-in" onClick={e => e.stopPropagation()}>
+               <div className="video-modal-header">
+                  <span className="video-modal-title">🎤 {viewingLyric.title}</span>
+                  <button className="video-modal-close" onClick={() => setViewingLyric(null)}>✕</button>
+               </div>
+               <div className="lyrics-box modal-lyrics">
+                  <div className="lyrics-header">
+                    <h3>Letra Guardada</h3>
+                    <button className="btn-copy" onClick={() => { navigator.clipboard.writeText(viewingLyric.lyrics || ''); alert('Copiado'); }}>Copiar Letra</button>
+                  </div>
+                  <div className="lyrics-content">
+                    {(viewingLyric.lyrics || '').split('\n').map((line, i) => <p key={i}>{line}</p>)}
+                  </div>
+               </div>
+            </div>
+          </div>
+        )}
       </main>
 
       <footer className="footer">
       </footer>
 
       <style dangerouslySetInnerHTML={{ __html: `
+        .mode-switcher {
+          display: flex;
+          background: var(--bg-secondary);
+          padding: 6px;
+          border-radius: var(--radius-sm);
+          margin-bottom: 24px;
+          gap: 6px;
+        }
+        .mode-tab {
+          flex: 1;
+          padding: 10px;
+          border: none;
+          background: transparent;
+          color: var(--text-muted);
+          font-weight: 700;
+          font-size: 14px;
+          cursor: pointer;
+          border-radius: 10px;
+          transition: 0.3s;
+          display: flex; align-items: center; justify-content: center; gap: 8px;
+        }
+        .mode-tab.active {
+          background: var(--bg-card);
+          color: var(--coral-dark);
+          box-shadow: var(--shadow-sm);
+        }
+        .lyrics-box {
+          margin-top: 24px;
+          background: var(--bg-secondary);
+          border-radius: var(--radius);
+          border: 1px solid var(--border);
+          padding: 24px;
+          text-align: left;
+        }
+        .lyrics-header {
+          display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;
+        }
+        .lyrics-header h3 { font-family: 'Playfair Display', serif; color: var(--coral); margin: 0; }
+        .lyrics-content {
+          max-height: 400px; overflow-y: auto;
+          line-height: 1.8;
+          font-size: 15px; color: var(--text-secondary);
+          white-space: pre-line;
+        }
+        .modal-lyrics { margin-top: 0; background: rgba(255,255,255,0.03); border: none; }
+        .modal-lyrics .lyrics-content { max-height: 60vh; color: rgba(255,255,255,0.8); }
+
+        .btn-copy {
+          padding: 6px 12px; font-size: 11px;
+          background: var(--bg-card); border: 1px solid var(--border);
+          border-radius: 8px; cursor: pointer; color: var(--text-muted);
+          font-weight: 700; text-transform: uppercase;
+        }
+
         .video-modal-overlay {
           position: fixed;
           top: 0; left: 0; right: 0; bottom: 0;
@@ -1147,6 +1380,26 @@ export default function App() {
           background: var(--bg-card-hover);
           border-color: rgba(139, 92, 246, 0.4);
         }
+        .history-item.dragging {
+          opacity: 0.4;
+          transform: scale(0.98);
+        }
+        .history-item.drop-target {
+          border-color: var(--purple-light);
+          background: rgba(139, 92, 246, 0.1);
+          transform: translateY(2px);
+          box-shadow: 0 0 20px rgba(139, 92, 246, 0.2);
+        }
+        .drag-handle {
+          padding: 10px 5px;
+          color: var(--text-muted);
+          cursor: grab;
+          transition: 0.2s;
+          display: flex; align-items: center;
+        }
+        .drag-handle:active { cursor: grabbing; }
+        .drag-handle:hover { color: white; }
+
         .history-thumb { position: relative; }
         .play-overlay {
           position: absolute;
