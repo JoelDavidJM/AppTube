@@ -146,6 +146,17 @@ export default function App() {
     localStorage.setItem('app_playlists', JSON.stringify(playlists));
   }, [playlists]);
 
+  // Prevent body scroll when modal is open
+  useEffect(() => {
+    if (activeVideoIndex !== -1) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'auto';
+    }
+    // Cleanup on unmount
+    return () => { document.body.style.overflow = 'auto'; };
+  }, [activeVideoIndex]);
+
   // Update playback rate when it changes OR when video changes
   useEffect(() => {
     if (videoRef.current) {
@@ -1048,11 +1059,10 @@ export default function App() {
           box-shadow: 0 8px 30px rgba(139, 92, 246, 0.6);
         }
         .video-modal-footer {
-          padding: 15px 10px;
+          padding: 0px 10px 15px;
           background: rgba(255,255,255,0.03);
           border-radius: 20px;
           border: 1px solid rgba(255,255,255,0.06);
-          margin-top: 5px;
         }
         .modal-controls-bar {
           display: flex;

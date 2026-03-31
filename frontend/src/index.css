@@ -447,13 +447,11 @@ body {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-
 .video-stats {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
 }
-
 .video-stat {
   display: flex;
   align-items: center;
